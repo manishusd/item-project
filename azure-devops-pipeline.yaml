@@ -1,0 +1,93 @@
+trigger:
+  - main
+
+pool:
+  vmImage: "ubuntu-latest"
+
+variables:
+  imageName: "node-crud-api"
+  dockerRegistryServiceConnection: "your-acr-service-connection"
+  containerRegistry: "your-acr-name.azurecr.io"
+  helmChartPath: "./helm"
+
+stages:
+  - stage: Build
+    jobs:
+      - job: BuildAndTest
+        steps:
+          - task: NodeTool@0
+            inputs:
+              versionSpec: "18.x"
+            displayName: "Install Node.js"
+
+          - script: |
+              npm ci
+            displayName: "Install Dependencies"
+
+          - script: |
+              npm run test:ci
+            displayName: "Run Tests"
+
+          - task: PublishTestResults@2
+            inputs:
+              testResultsFormat: "JUnit"
+              testResultsFiles: "junit.xml"
+              mergeTestResults: true
+              testRunTitle: "Unit Tests"
+            displayName: "Publish Test Results"
+
+          - task: PublishCodeCoverageResults@1
+            inputs:
+              codeCoverageTool: "Cobertura"
+              summaryFileLocation: "$(System.DefaultWorkingDirectory)/coverage/cobertura-coverage.xml"
+              reportDirectory: "$(System.DefaultWorkingDirectory)/coverage"
+            displayName: "Publish Code Coverage"
+
+          - task: Docker@2
+            inputs:
+              containerRegistry: "$(dockerRegistryServiceConnection)"
+              repository: "$(imageName)"
+              command: "buildAndPush"
+              Dockerfile: "**/Dockerfile"
+              tags: |
+                $(Build.BuildId)
+                latest
+            displayName: "Build and Push Docker Image"
+
+          - task: HelmDeploy@0
+            inputs:
+              command: package
+              chartPath: $(helmChartPath)
+              destination: "$(Build.ArtifactStagingDirectory)"
+            displayName: "Package Helm Chart"
+
+          - task: PublishBuildArtifacts@1
+            inputs:
+              PathtoPublish: "$(Build.ArtifactStagingDirectory)"
+              ArtifactName: "helm-chart"
+              publishLocation: "Container"
+            displayName: "Publish Helm Chart"
+
+  - stage: Deploy
+    dependsOn: Build
+    condition: succeeded()
+    jobs:
+      - deployment: Deploy
+        environment: "production"
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: HelmDeploy@0
+                  inputs:
+                    connectionType: "Azure Resource Manager"
+                    azureSubscription: "your-azure-subscription"
+                    azureResourceGroup: "your-aks-resource-group"
+                    kubernetesCluster: "your-aks-cluster-name"
+                    command: "upgrade"
+                    chartType: "FilePath"
+                    chartPath: "$(Pipeline.Workspace)/helm-chart/node-crud-api-0.1.0.tgz"
+                    releaseName: "node-crud-api"
+                    valueFile: "$(helmChartPath)/values.yaml"
+                    install: true
+                  displayName: "Deploy to AKS"
