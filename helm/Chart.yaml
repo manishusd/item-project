@@ -1,0 +1,6 @@
+apiVersion: v2
+name: node-crud-api
+description: A Helm chart for Node.js CRUD API deployment on AKS
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
